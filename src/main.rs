@@ -1,11 +1,11 @@
-use color_eyre::Result;
+use color_eyre::{owo_colors::OwoColorize, Result};
 use crossterm::event::{self, Event};
 use qrcode::QrCode;
-use ratatui::{layout::{Alignment, Constraint, Direction, Layout, Rect}, style::{Color, Style}, widgets::{Block, BorderType, Borders, Gauge, Paragraph}, DefaultTerminal, Frame};
+use ratatui::{layout::{Alignment, Constraint, Direction, Layout, Rect}, style::{Color, Style}, text::Text, widgets::{Block, BorderType, Borders, Gauge, Paragraph}, DefaultTerminal, Frame};
 use signal::create_cli;
 use rusqlite::Connection;
 use directories::ProjectDirs;
-use ratatui_image::{picker::Picker, StatefulImage, protocol::StatefulProtocol};
+use ratatui_image::{picker::Picker, FilterType, Image, Resize};
 
 mod signal;
 mod db;
@@ -42,33 +42,20 @@ impl App {
         }
     
         let mut cli = create_cli(path.clone(), "".to_string()).unwrap();
-        let stdin = cli.stdin.as_mut().unwrap();
-        let stdout = cli.stdout.as_mut().unwrap();
+        let stdin = std::sync::Arc::new(std::sync::Mutex::new(cli.stdin.take().unwrap()));
+        let stdout = std::sync::Arc::new(std::sync::Mutex::new(cli.stdout.take().unwrap()));
     
-        //let accounts = signal::list_accounts(stdin, stdout);
-        let accounts = vec![
-            types::SignalAccount {
-                uuid: "1234".to_string(),
-                number: "+1234567890".to_string(),
-            },
-            types::SignalAccount {
-                uuid: "5678".to_string(),
-                number: "+0987654321".to_string(),
-            },
-            types::SignalAccount {
-                uuid: "9101".to_string(),
-                number: "+1122334455".to_string(),
-            },
-            types::SignalAccount {
-                uuid: "1213".to_string(),
-                number: "+5566778899".to_string(),
-            },
-        ];
+        let accounts = signal::list_accounts(stdin, stdout);
         let mut selected_number = "";
         let mut index = 0;
 
-        
+        let mut break_all = false;
+
         loop {
+            if break_all {
+                break;
+            }
+
             terminal.draw(|frame| {
                 let centered = {
                     let r = frame.area();
@@ -168,74 +155,107 @@ impl App {
 
                         crossterm::event::KeyCode::Enter => {
                             if index == accounts.len() {
-                                let link = signal::link_device(stdin, stdout);
+                                let link = signal::link_device(&mut *stdin.lock().unwrap(), &mut *stdout.lock().unwrap());
                                 let code = QrCode::new(link.clone()).unwrap();
                                 
                                 let qr = code.render::<image::Luma<u8>>()
-                                    .quiet_zone(false)
-                                    .max_dimensions(200, 200)
+                                    .quiet_zone(true)
+                                    .module_dimensions(1,1)
                                     .build();
 
-                                qr.save(path.join("qr.png")).unwrap();
+                                let mut out = String::new();
+                                let width = qr.width() as usize;
+                                let height = qr.height() as usize;
                             
-                                let dyn_image = image::io::Reader::open(path.join("qr.png"))?.decode()?;
-
-                                let mut picker = Picker::from_query_stdio().unwrap();
-                                let mut image = picker.new_resize_protocol(dyn_image);
-                                
+                                for y in (0..height).step_by(2) {
+                                    for x in 0..width {
+                                        let top = qr.get_pixel(x as u32, y as u32)[0] < 128;
+                                        let bottom = if y + 1 < height {
+                                            qr.get_pixel(x as u32, (y + 1) as u32)[0] < 128
+                                        } else {
+                                            false
+                                        };
+                                        let ch = match (top, bottom) {
+                                            (true, true) => '█',
+                                            (true, false) => '▀',
+                                            (false, true) => '▄',
+                                            (false, false) => ' ',
+                                        };
+                                        out.push(ch);
+                                    }
+                                    out.push('\n');
+                                }
+                                                            
                                 terminal.clear()?;
                                 terminal.flush()?;
 
-                                terminal.draw(|f| {
-                                    let centered = {
-                                        let area = f.area();
-                                        let width = area.width.max(40);
-                                        let height = (40).min(area.height.saturating_sub(4));
+                                let (tx, rx) = std::sync::mpsc::channel();
+                                let stdin_clone = stdin.clone();
+                                let stdout_clone = stdout.clone();
 
-                                        let h_margin = (area.width - width) / 2;
-                                        let v_margin = (area.height - height) / 2;
+                                std::thread::spawn(move || {
+                                    signal::finish_link(&mut *stdin_clone.lock().unwrap(), &mut *stdout_clone.lock().unwrap(), link);
+                                    tx.send(true).unwrap();
+                                });
 
-                                        Rect::new(
-                                            h_margin,
-                                            v_margin,
-                                            width,
-                                            height
-                                        )
-                                    };
+                                loop {
+                                    terminal.draw(|f| {
+                                        let centered = {
+                                            let qr_width = 49u16;
+                                            let qr_height = (49u16) / 2;
 
-                                    let block = Block::default()
-                                        .title("Link Device")
-                                        .borders(Borders::ALL)
-                                        .title_alignment(Alignment::Center)
-                                        .border_type(BorderType::Rounded);
+                                            let area = f.area();
+                                            let h_margin = (area.width.saturating_sub(qr_width + 4)) / 2;  // +4 for block borders/margin
+                                            let v_margin = (area.height.saturating_sub(qr_height + 4)) / 2;
+                                        
+                                            Rect::new(
+                                                h_margin,
+                                                v_margin,
+                                                qr_width + 4,
+                                                qr_height + 4
+                                            )
+                                        };
+    
+                                        let block = Block::default()
+                                            .title("Link Device - Scan QR Code with Signal")
+                                            .borders(Borders::ALL)
+                                            .title_alignment(Alignment::Center)
+                                            .border_type(BorderType::Rounded);
+    
+                                        f.render_widget(block.clone(), centered);
+    
+                                        let inner = block.inner(centered);
+    
+                                        let chunks = Layout::default()
+                                           .margin(1)
+                                            .constraints(
+                                                vec![
+                                                    Constraint::Min(10),
+                                                ]
+                                            )
+                                            .split(inner);
+    
+                                        f.render_widget(Text::from(out.clone()), chunks[0]);
+                                    })?;
 
-                                    f.render_widget(block.clone(), centered);
+                                    if rx.try_recv().is_ok() {
+                                        break;
+                                    }
 
-                                    let inner = block.inner(centered);
+                                    if event::poll(std::time::Duration::from_millis(100))? {
+                                        if let Event::Key(key) = event::read()? {
+                                            if key.code == crossterm::event::KeyCode::Esc {
+                                                break_all = true;
+                                                break;
+                                            }
+                                        }
+                                    }
 
-                                    let chunks = Layout::default()
-                                       .margin(1)
-                                        .constraints(
-                                            vec![
-                                                Constraint::Min(40),
-                                                Constraint::Length(1),
-                                                Constraint::Length(2),
-                                            ]
-                                        )
-                                        .split(inner);
+                                    std::thread::sleep(std::time::Duration::from_millis(100));
+                                }
 
-                                    let instruction = Paragraph::new("Scan QR code with signal.")
-                                        .alignment(Alignment::Center);
-
-                                    f.render_stateful_widget(StatefulImage::default(), chunks[0], &mut image);
-                                    f.render_widget(instruction, chunks[2]);
-                                })?;
-
-                                image.last_encoding_result().unwrap()?;
 
                                 //terminal.flush()?;
-
-                                signal::finish_link(stdin, stdout, link);
 
                                 println!("Device linked successfully!");
                             } else {

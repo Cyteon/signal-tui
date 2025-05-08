@@ -41,6 +41,8 @@ pub fn list_accounts(stdin: &mut std::process::ChildStdin, stdout: &mut std::pro
             // i have no idea if this is a good idea buttttttt
             panic!("Failed to get response from signal-cli\nThis means that signal-cli most likely crashed\nPlease ensure you have java installed as that is a requirement");
         }
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     let data: types::SignalAccountList = serde_json::from_str(&response).unwrap();
@@ -115,6 +117,7 @@ pub fn finish_link(
     // it should have id:6
     while response.is_empty() || !response.contains("\"id\":\"6\"") {
         response = read_res(stdout);
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 
