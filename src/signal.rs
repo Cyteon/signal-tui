@@ -29,34 +29,52 @@ pub fn create_cli(path: PathBuf, args: String) -> io::Result<std::process::Child
 pub fn list_accounts(stdin: &mut std::process::ChildStdin, stdout: &mut std::process::ChildStdout) -> Vec<SignalAccount> {
     writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"listAccounts\",\"params\":{{}},\"id\":\"1\"}}").unwrap();
 
-    let response = read_res(stdout);
-    let data: types::SignalAccountList = serde_json::from_str(&response).unwrap();
+    let mut retry_attempts_until_error = 20;
+    let mut response= String::new();
 
+    while response.is_empty() {
+        response = read_res(stdout);
+
+        retry_attempts_until_error -= 1;
+
+        if retry_attempts_until_error == 0 {
+            // i have no idea if this is a good idea buttttttt
+            panic!("Failed to get response from signal-cli\nThis means that signal-cli most likely crashed\nPlease ensure you have java installed as that is a requirement");
+        }
+    }
+
+    let data: types::SignalAccountList = serde_json::from_str(&response).unwrap();
     data.result.iter()
         .map(|account| SignalAccount {
             uuid: account.uuid.clone(),
             number: account.number.clone(),
         })
-        .collect();
-    
-    vec![]
+        .collect()
 }
 
 pub fn read_res(stdout: &mut std::process::ChildStdout) -> String {
-    let mut string = String::new();
-    stdout.read_to_string(&mut string).unwrap();
-
-    string
+    use std::io::{BufRead, BufReader};
+    
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    
+    match reader.read_line(&mut line) {
+        Ok(_) => line,
+        Err(e) => {
+            eprintln!("Error reading response: {}", e);
+            String::new()
+        }
+    }
 }
 
-pub fn link_device(stdin: &mut std::process::ChildStdin, stdout: &mut std::process::ChildStdout) {
+pub fn link_device(stdin: &mut std::process::ChildStdin, stdout: &mut std::process::ChildStdout) -> String {
     writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"startLink\",\"id\":\"5\"}}").unwrap();
 
     let response = read_res(stdout);
     let data: types::SignalLinkingResponse = serde_json::from_str(&response).unwrap();
     let link = data.result.get("deviceLinkUri").unwrap().clone();
 
-    finish_link(stdin, stdout, link);
+    link
 }
 
 pub fn finish_link(
@@ -69,21 +87,35 @@ pub fn finish_link(
         Err(_) => "Unknown".to_string()
     };
 
-    writeln!(
-        stdin, 
+    let mut content = format!(
         r#"
             {{
                 "jsonrpc":"2.0",
                 "method":"finishLink",
                 "id":"6",
                 "params": {{
-                    "deviceLinkUri": {},
-                    "deviceName": {}
+                    "deviceLinkUri": "{}",
+                    "deviceName": "{}"
                 }}
             }}
         "#,
         link, name
+    );
+
+    content = content.replace("\n", "");
+    content = content.replace("\t", "");
+    content = content.trim().to_string();
+
+    writeln!(
+        stdin, "{}", content
     ).unwrap();
+
+    let mut response = String::new();
+
+    // it should have id:6
+    while response.is_empty() || !response.contains("\"id\":\"6\"") {
+        response = read_res(stdout);
+    }
 }
 
 // cli download
