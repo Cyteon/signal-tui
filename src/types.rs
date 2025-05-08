@@ -37,6 +37,5 @@ pub struct SignalAccountList {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SignalAccount {
-    pub uuid: String,
     pub number: String,
 }

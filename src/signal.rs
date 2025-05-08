@@ -1,4 +1,5 @@
 use std::{io::{self, Read, Write}, path::PathBuf};
+use color_eyre::owo_colors::OwoColorize;
 use hostname::get;
 use ratatui::{layout::{Alignment, Constraint, Direction, Layout}, style::{Color, Style}, widgets::{Block, Borders, Gauge, Paragraph}, DefaultTerminal};
 use std::process::{Command, Stdio};
@@ -48,7 +49,6 @@ pub fn list_accounts(stdin: &mut std::process::ChildStdin, stdout: &mut std::pro
     let data: types::SignalAccountList = serde_json::from_str(&response).unwrap();
     data.result.iter()
         .map(|account| SignalAccount {
-            uuid: account.uuid.clone(),
             number: account.number.clone(),
         })
         .collect()

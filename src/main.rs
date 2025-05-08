@@ -5,7 +5,6 @@ use ratatui::{layout::{Alignment, Constraint, Direction, Layout, Rect}, style::{
 use signal::create_cli;
 use rusqlite::Connection;
 use directories::ProjectDirs;
-use ratatui_image::{picker::Picker, FilterType, Image, Resize};
 
 mod signal;
 mod db;
@@ -45,7 +44,7 @@ impl App {
         let stdin = std::sync::Arc::new(std::sync::Mutex::new(cli.stdin.take().unwrap()));
         let stdout = std::sync::Arc::new(std::sync::Mutex::new(cli.stdout.take().unwrap()));
     
-        let accounts = signal::list_accounts(stdin, stdout);
+        let mut accounts = signal::list_accounts(&mut *stdin.lock().unwrap(), &mut *stdout.lock().unwrap());
         let mut selected_number = "";
         let mut index = 0;
 
@@ -193,8 +192,10 @@ impl App {
                                 let stdin_clone = stdin.clone();
                                 let stdout_clone = stdout.clone();
 
+                                let cloned = link.clone();
+
                                 std::thread::spawn(move || {
-                                    signal::finish_link(&mut *stdin_clone.lock().unwrap(), &mut *stdout_clone.lock().unwrap(), link);
+                                    signal::finish_link(&mut *stdin_clone.lock().unwrap(), &mut *stdout_clone.lock().unwrap(), cloned);
                                     tx.send(true).unwrap();
                                 });
 
@@ -218,9 +219,7 @@ impl App {
     
                                         let block = Block::default()
                                             .title("Link Device - Scan QR Code with Signal")
-                                            .borders(Borders::ALL)
-                                            .title_alignment(Alignment::Center)
-                                            .border_type(BorderType::Rounded);
+                                            .title_alignment(Alignment::Center);
     
                                         f.render_widget(block.clone(), centered);
     
@@ -231,16 +230,22 @@ impl App {
                                             .constraints(
                                                 vec![
                                                     Constraint::Min(10),
+                                                    Constraint::Length(1),
+                                                    Constraint::Length(1)
                                                 ]
                                             )
                                             .split(inner);
     
-                                        f.render_widget(Text::from(out.clone()), chunks[0]);
-                                    })?;
+                                        f.render_widget(
+                                            Text::from(out.clone()),
+                                            chunks[0]
+                                        );
 
-                                    if rx.try_recv().is_ok() {
-                                        break;
-                                    }
+                                        f.render_widget(
+                                            Text::from("Press 'o' to view in browser").alignment(Alignment::Center),
+                                            chunks[2]
+                                        )
+                                    })?;
 
                                     if event::poll(std::time::Duration::from_millis(100))? {
                                         if let Event::Key(key) = event::read()? {
@@ -248,19 +253,30 @@ impl App {
                                                 break_all = true;
                                                 break;
                                             }
+
+                                            if key.code == crossterm::event::KeyCode::Char('o') {
+                                                webbrowser::open(
+                                                    format!(
+                                                        "https://api.qrserver.com/v1/create-qr-code/?size=500x500&data={}",
+                                                        urlencoding::encode(
+                                                            &link
+                                                        )
+                                                    ).as_str()
+                                                ).unwrap();
+                                            }
                                         }
+                                    }
+
+                                    if rx.try_recv().is_ok() {
+                                        accounts = signal::list_accounts(&mut *stdin.lock().unwrap(), &mut *stdout.lock().unwrap());
+                                        break;
                                     }
 
                                     std::thread::sleep(std::time::Duration::from_millis(100));
                                 }
-
-
-                                //terminal.flush()?;
-
-                                println!("Device linked successfully!");
                             } else {
                                 selected_number = &accounts[index].number;
-                                dbg!(selected_number);
+                                break;
                             }
                         }
 
