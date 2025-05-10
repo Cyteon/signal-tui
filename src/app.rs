@@ -98,7 +98,7 @@ pub fn app(
                 .borders(Borders::ALL).border_type(BorderType::Rounded);
 
             let esc_action = if chatting {
-                "unfocus chatbox"
+                "stop typing"
             } else if location_selected {
                 "back"
             } else {
