@@ -1,6 +1,7 @@
 use std::{io::{self, Read, Write}, path::PathBuf};
 use color_eyre::owo_colors::OwoColorize;
 use hostname::get;
+use random_string::generate;
 use ratatui::{layout::{Alignment, Constraint, Direction, Layout}, style::{Color, Style}, widgets::{Block, Borders, Gauge, Paragraph}, DefaultTerminal};
 use std::process::{Command, Stdio};
 use reqwest::blocking::Client;
@@ -118,6 +119,53 @@ pub fn finish_link(
     while response.is_empty() || !response.contains("\"id\":\"6\"") {
         response = read_res(stdout);
         std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+pub fn generate_id() -> String {
+    let charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    generate(32, charset)
+}
+
+pub fn sync(
+    stdin: &mut std::process::ChildStdin, 
+    stdout: &mut std::process::ChildStdout,
+    db: &rusqlite::Connection,
+    account_number: String
+) {
+    let id = generate_id();
+    writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"listGroups\",\"id\":\"{}\"}}", id).unwrap();
+
+    let mut response = String::new();
+
+    while response.is_empty() || !response.contains(&id) {
+        response = read_res(stdout);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    let data: types::SignalGroupList = serde_json::from_str(&response).unwrap();
+
+    let groups = data.result;
+
+    db.execute("DELETE FROM groups WHERE accountNumber = ?", [&account_number]).unwrap();
+
+    for group in groups {
+        db.execute(
+            "INSERT INTO groups (id, name, description, is_member, is_blocked, members, pending_members, requesting_members, admins, group_invite_link, accountNumber) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                group.id,
+                group.name,
+                group.description,
+                group.is_member,
+                group.is_blocked,
+                serde_json::to_string(&group.members).unwrap(),
+                serde_json::to_string(&group.pending_members).unwrap(),
+                serde_json::to_string(&group.requesting_members).unwrap(),
+                serde_json::to_string(&group.admins).unwrap(),
+                group.group_invite_link,
+                account_number
+            ]
+        ).unwrap();
     }
 }
 
