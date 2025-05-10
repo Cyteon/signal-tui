@@ -1,4 +1,4 @@
-use std::{io::{self, Read, Write}, path::PathBuf};
+use std::{io::{self, BufRead, BufReader, Read, Write}, path::PathBuf};
 use color_eyre::owo_colors::OwoColorize;
 use hostname::get;
 use random_string::generate;
@@ -88,6 +88,110 @@ pub fn link_device(stdin: &mut std::process::ChildStdin, stdout: &mut std::proce
     link
 }
 
+pub fn subscribe_receive(
+    stdin: &mut std::process::ChildStdin, 
+) {
+    let id = generate_id();
+    writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"subscribeReceive\",\"params\":{{}},\"id\":\"{}\"}}", id).unwrap();
+}
+
+pub fn read_msg_event(
+    stdout: &mut std::process::ChildStdout,
+    db: &rusqlite::Connection,
+// just going to return name and msg, cant be bothered to do more rn :sob:
+) -> Option<(String, Option<String>, Option<String>, String, String)> {
+    let reader = BufReader::new(stdout);
+
+    for line in reader.lines() {
+        let line = line.unwrap();
+        if line.contains("\"method\":\"receive\"") {
+        let data: Result<types::SignalMessageEvent, serde_json::Error> = serde_json::from_str(&line);
+
+        if let Ok(data) = data {
+            let envelope = data.params.result.envelope;
+
+            let source_uuid = envelope.source_uuid;
+            let source_name = envelope.source_name;
+            let timestamp = envelope.timestamp;
+            let account_number = data.params.result.account;
+
+            let msg = if let Some(data_message) = envelope.data_message.clone() {
+                data_message.message.unwrap_or_default()
+            } else if let Some(sync_message) = envelope.sync_message.clone()  {
+                if let Some(sent_message) = sync_message.sent_message {
+                    if let Some(message) = sent_message.message {
+                        message
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            };
+
+            let mut group_id = None;
+
+            let destionation_uuid = if let Some(sync_message) = envelope.sync_message {
+                if let Some(sent_message) = sync_message.sent_message {
+                    if let Some(destination_uuid) = sent_message.destination_uuid {
+                    Some(destination_uuid)
+                    } else {
+                        if let Some(group_info) = sent_message.group_info {
+                            group_id = Some(group_info.group_id);
+                            None
+                        } else {
+                            return None;
+                        }
+                    }
+                } else {
+                    return None;
+                }
+            } else {
+                if envelope.data_message.is_some() {
+                    if let Some(group_info) = envelope.data_message.unwrap().group_info {
+                        group_id = Some(group_info.group_id);
+                        None
+                    } else {
+                        Some("self".to_string())
+                    }
+                } else {
+                    return None;
+                }
+            };
+
+            db.execute(
+                "INSERT INTO messages (id, sourceUuid, sourceName, destinationUuid, groupId, message, timestamp, accountNumber) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    generate_id(), // ill use this for msg ids too
+                    source_uuid,
+                    source_name,
+                    destionation_uuid,
+                    group_id,
+                    msg,
+                    timestamp,
+                    account_number
+                ],
+            ).unwrap();
+
+            return Some((
+                source_uuid,
+                destionation_uuid,
+                group_id,
+                source_name,
+                msg,
+            ));
+        } else {
+            return None;
+        }
+        }
+    }
+
+    None
+}
+
+
 pub fn finish_link(
     stdin: &mut std::process::ChildStdin, 
     stdout: &mut std::process::ChildStdout, 
@@ -125,7 +229,6 @@ pub fn finish_link(
 
     let mut response = String::new();
 
-    // it should have id:6
     while response.is_empty() || !response.contains(&id) {
         response = read_res(stdout);
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -140,8 +243,6 @@ pub fn generate_id() -> String {
 pub fn sync(
     stdin: &mut std::process::ChildStdin, 
     stdout: &mut std::process::ChildStdout,
-    db: &rusqlite::Connection,
-    account_number: String
 ) -> (Vec<SignalGroup>, Vec<SignalContact>) {
     // groups
 
@@ -220,9 +321,9 @@ pub fn download_cli(terminal: &mut DefaultTerminal, path: PathBuf) -> Result<(),
                 .margin(5)
                 .constraints(
                     [
-                        Constraint::Length(1), // Title line
-                        Constraint::Length(3), // Gauge
-                        Constraint::Min(0),    // Spacer
+                        Constraint::Length(1),
+                        Constraint::Length(3),
+                        Constraint::Min(0),
                     ]
                     .as_ref(),
                 )

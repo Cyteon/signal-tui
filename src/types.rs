@@ -1,22 +1,6 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
-// -- app --
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct App {
-    pub state: AppState,
-    pub download_status: u16,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum AppState {
-    #[default]
-    Running,
-    Started,
-    Quitting,
-}
-
 // -- rpc --
 
 // {"jsonrpc":"2.0","result":{"deviceLinkUri":"sgnl://linkdevice?uuid=X&pub_key=X"},"id":"5"}
@@ -73,7 +57,65 @@ pub struct SignalContactList {
     pub id: String
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SignalMessageEvent {
+    pub jsonrpc: String,
+    pub method: String,
+    pub params: SignalMessageEventParams,
+}
+
 // not exactly pure from rpc
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SignalMessageEventParams {
+    pub result: SignalMessageEventResult,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalMessageEventResult {
+    pub envelope: SignalMessageEventEnvelope,
+    pub account: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalMessageEventEnvelope {
+    pub source_uuid: String,
+    pub source_name: String,
+    pub timestamp: u64,
+    pub data_message: Option<SignalMessageEventDataMessage>,
+    pub sync_message: Option<SignalMessageEventSyncMessage>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalMessageEventDataMessage {
+    pub message: Option<String>,
+    pub expires_in_seconds: u64,
+    pub group_info: Option<SignalMessageEventGroupInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalMessageEventSyncMessage {
+    pub sent_message: Option<SignalMessageEventSentMessage>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalMessageEventSentMessage {
+    pub destination_uuid: Option<String>,
+    pub message: Option<String>,
+    pub expires_in_seconds: u64,
+    pub group_info: Option<SignalMessageEventGroupInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalMessageEventGroupInfo {
+  pub group_id: String,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]

@@ -14,8 +14,7 @@ use directories::ProjectDirs;
 mod signal;
 mod db;
 mod types;
-
-use types::App;
+mod app;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -47,7 +46,7 @@ fn run(mut terminal: DefaultTerminal) -> Result<()> {
 
     let mut cli = create_cli(path.clone(), "".to_string()).unwrap();
     let stdin = std::sync::Arc::new(std::sync::Mutex::new(cli.stdin.take().unwrap()));
-    let stdout = std::sync::Arc::new(std::sync::Mutex::new(cli.stdout.take().unwrap()));
+    let stdout: std::sync::Arc<std::sync::Mutex<std::process::ChildStdout>> = std::sync::Arc::new(std::sync::Mutex::new(cli.stdout.take().unwrap()));
 
     let mut accounts = signal::list_accounts(&mut *stdin.lock().unwrap(), &mut *stdout.lock().unwrap());
     let mut selected_number: String = "".to_string();
@@ -281,32 +280,12 @@ fn run(mut terminal: DefaultTerminal) -> Result<()> {
                             *stdin.lock().unwrap() = cli.stdin.take().unwrap();
                             *stdout.lock().unwrap() = cli.stdout.take().unwrap();
 
-                            terminal.clear()?;
-                            terminal.flush()?;
-
-                            terminal.draw(|f| {
-                                let centered = {
-                                    let area = f.area();
-                                    let h_margin = (area.width - 20) / 2;
-                                    let v_margin = (area.height - 3) / 2;
-
-                                    Rect::new(
-                                        h_margin,
-                                        v_margin,
-                                        20,
-                                        3
-                                    )
-                                };
-
-                                f.render_widget("Syncronizing...", centered);
-                            })?;
-
-                            signal::sync(
+                            // all stff before was just starting the app, now we do the actual app in another file
+                            app::app(
+                                &mut terminal, 
                                 &mut *stdin.lock().unwrap(), 
-                                &mut *stdout.lock().unwrap(), 
-                                &database, 
-                                selected_number
-                            );
+                                stdout
+                            ).unwrap();
 
                             break;
                         }
