@@ -8,7 +8,7 @@ use reqwest::blocking::Client;
 use flate2::read::GzDecoder;
 use tar::Archive;
 
-use crate::types::{self, SignalAccount};
+use crate::types::{self, SignalAccount, SignalContact, SignalGroup};
 
 pub fn create_cli(path: PathBuf, args: String) -> io::Result<std::process::Child> {
     let cli_path = match std::env::consts::OS {
@@ -29,12 +29,13 @@ pub fn create_cli(path: PathBuf, args: String) -> io::Result<std::process::Child
 }
 
 pub fn list_accounts(stdin: &mut std::process::ChildStdin, stdout: &mut std::process::ChildStdout) -> Vec<SignalAccount> {
-    writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"listAccounts\",\"params\":{{}},\"id\":\"1\"}}").unwrap();
+    let id = generate_id();
+    writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"listAccounts\",\"params\":{{}},\"id\":\"{}\"}}", id).unwrap();
 
     let mut retry_attempts_until_error = 20;
     let mut response= String::new();
 
-    while response.is_empty() {
+    while response.is_empty() || !response.contains(&id) {
         response = read_res(stdout);
 
         retry_attempts_until_error -= 1;
@@ -71,9 +72,16 @@ pub fn read_res(stdout: &mut std::process::ChildStdout) -> String {
 }
 
 pub fn link_device(stdin: &mut std::process::ChildStdin, stdout: &mut std::process::ChildStdout) -> String {
-    writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"startLink\",\"id\":\"5\"}}").unwrap();
+    let id = generate_id();
+    writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"startLink\",\"id\":\"{}\"}}", id).unwrap();
 
-    let response = read_res(stdout);
+    let mut response = String::new();
+
+    while response.is_empty() || !response.contains(&id) {
+        response = read_res(stdout);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
     let data: types::SignalLinkingResponse = serde_json::from_str(&response).unwrap();
     let link = data.result.get("deviceLinkUri").unwrap().clone();
 
@@ -90,19 +98,21 @@ pub fn finish_link(
         Err(_) => "Unknown".to_string()
     };
 
+    let id = generate_id();
+
     let mut content = format!(
         r#"
             {{
                 "jsonrpc":"2.0",
                 "method":"finishLink",
-                "id":"6",
+                "id":"{}",
                 "params": {{
                     "deviceLinkUri": "{}",
                     "deviceName": "{}"
                 }}
             }}
         "#,
-        link, name
+        id, link, name
     );
 
     content = content.replace("\n", "");
@@ -116,7 +126,7 @@ pub fn finish_link(
     let mut response = String::new();
 
     // it should have id:6
-    while response.is_empty() || !response.contains("\"id\":\"6\"") {
+    while response.is_empty() || !response.contains(&id) {
         response = read_res(stdout);
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
@@ -132,8 +142,10 @@ pub fn sync(
     stdout: &mut std::process::ChildStdout,
     db: &rusqlite::Connection,
     account_number: String
-) {
-    let id = generate_id();
+) -> (Vec<SignalGroup>, Vec<SignalContact>) {
+    // groups
+
+    let mut id = generate_id();
     writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"listGroups\",\"id\":\"{}\"}}", id).unwrap();
 
     let mut response = String::new();
@@ -147,26 +159,22 @@ pub fn sync(
 
     let groups = data.result;
 
-    db.execute("DELETE FROM groups WHERE accountNumber = ?", [&account_number]).unwrap();
+    // contacts
 
-    for group in groups {
-        db.execute(
-            "INSERT INTO groups (id, name, description, is_member, is_blocked, members, pending_members, requesting_members, admins, group_invite_link, accountNumber) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rusqlite::params![
-                group.id,
-                group.name,
-                group.description,
-                group.is_member,
-                group.is_blocked,
-                serde_json::to_string(&group.members).unwrap(),
-                serde_json::to_string(&group.pending_members).unwrap(),
-                serde_json::to_string(&group.requesting_members).unwrap(),
-                serde_json::to_string(&group.admins).unwrap(),
-                group.group_invite_link,
-                account_number
-            ]
-        ).unwrap();
+    id = generate_id();
+    writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"listContacts\",\"id\":\"{}\"}}", id).unwrap();
+
+    response = String::new();
+
+    while response.is_empty() || !response.contains(&id) {
+        response = read_res(stdout);
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
+
+    let data: types::SignalContactList = serde_json::from_str(&response).unwrap();
+    let contacts = data.result;
+
+    (groups, contacts)
 }
 
 // cli download

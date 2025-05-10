@@ -66,21 +66,66 @@ pub struct SignalGroupList {
     pub id: String
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SignalContactList {
+    pub jsonrpc: String,
+    pub result: Vec<SignalContact>,
+    pub id: String
+}
+
 // not exactly pure from rpc
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct SignalGroup {
     pub id: String,
     pub name: String,
     pub description: String,
     pub is_member: bool,
     pub is_blocked: bool,
-    pub members: Vec<String>,
-    pub pending_members: Vec<String>,
-    pub requesting_members: Vec<String>,
-    pub admins: Vec<String>,
+    pub members: Vec<SignalUser>,
+    pub pending_members: Vec<SignalUser>,
+    pub requesting_members: Vec<SignalUser>,
+    pub admins: Vec<SignalUser>,
     pub group_invite_link: String
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalContact {
+    pub number: Option<String>,
+    pub uuid: String,
+    pub username: Option<String>,
+    pub name: String,
+    pub given_name: Option<String>,
+    pub family_name: Option<String>,
+    pub nick_name: Option<String>,
+    pub nick_given_name: Option<String>,
+    pub nick_family_name: Option<String>,
+    pub note: Option<String>,
+    pub color: Option<String>,
+    pub is_hidden: bool,
+    pub is_blocked: bool,
+    pub message_expiration_time: u64,
+    pub profile: Option<SignalProfile>
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SignalProfile {
+    pub given_name: Option<String>,
+    pub family_name: Option<String>,
+    pub about: Option<String>,
+    pub about_emoji: Option<String>,
+    pub has_avatar: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SignalUser {
+    pub number: Option<String>,
+    pub uuid: String,
+}
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SignalAccount {

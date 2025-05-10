@@ -50,7 +50,7 @@ fn run(mut terminal: DefaultTerminal) -> Result<()> {
     let stdout = std::sync::Arc::new(std::sync::Mutex::new(cli.stdout.take().unwrap()));
 
     let mut accounts = signal::list_accounts(&mut *stdin.lock().unwrap(), &mut *stdout.lock().unwrap());
-    let mut selected_number = "";
+    let mut selected_number: String = "".to_string();
     let mut index = 0;
 
     loop {
@@ -271,12 +271,42 @@ fn run(mut terminal: DefaultTerminal) -> Result<()> {
                                 std::thread::sleep(std::time::Duration::from_millis(100));
                             }
                         } else {
-                            selected_number = &accounts[index].number;
+                            selected_number = accounts[index].number.clone();
 
                             cli.kill().unwrap();
                             cli = create_cli(path.clone(), format!(
                                 "-a {}", selected_number
                             )).unwrap();
+
+                            *stdin.lock().unwrap() = cli.stdin.take().unwrap();
+                            *stdout.lock().unwrap() = cli.stdout.take().unwrap();
+
+                            terminal.clear()?;
+                            terminal.flush()?;
+
+                            terminal.draw(|f| {
+                                let centered = {
+                                    let area = f.area();
+                                    let h_margin = (area.width - 20) / 2;
+                                    let v_margin = (area.height - 3) / 2;
+
+                                    Rect::new(
+                                        h_margin,
+                                        v_margin,
+                                        20,
+                                        3
+                                    )
+                                };
+
+                                f.render_widget("Syncronizing...", centered);
+                            })?;
+
+                            signal::sync(
+                                &mut *stdin.lock().unwrap(), 
+                                &mut *stdout.lock().unwrap(), 
+                                &database, 
+                                selected_number
+                            );
 
                             break;
                         }
