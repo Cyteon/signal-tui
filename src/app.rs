@@ -395,26 +395,22 @@ pub fn app(
                     },
 
                     crossterm::event::KeyCode::Up => {
-                        if !chatting {
-                            if location_selected {
-                                if message_index > 0 {
-                                    message_index -= 1;
-                                }
-                            } else if selected_index > 0 {
-                                selected_index -= 1;
+                        if location_selected {
+                            if message_index > 0 {
+                                message_index -= 1;
                             }
+                        } else if selected_index > 0 {
+                            selected_index -= 1;
                         }
                     }
 
                     crossterm::event::KeyCode::Down => {
-                        if !chatting {
-                            if location_selected {
-                                if message_index < messages.len().saturating_sub(1) {
-                                    message_index += 1;
-                                }
-                            } else if selected_index < groups.len() + contacts.len() + 1 {
-                                selected_index += 1;
+                        if location_selected {
+                            if message_index < messages.len().saturating_sub(1) {
+                                message_index += 1;
                             }
+                        } else if selected_index < groups.len() + contacts.len() + 1 {
+                            selected_index += 1;
                         }
                     }
 
