@@ -13,7 +13,8 @@ use crate::{signal, types};
 pub fn app(
     terminal: &mut DefaultTerminal,
     stdin: &mut std::process::ChildStdin, 
-    stdout: std::sync::Arc<std::sync::Mutex<ChildStdout>>
+    stdout: std::sync::Arc<std::sync::Mutex<ChildStdout>>,
+    account_number: String,
 ) -> Result<()> {
     let path = ProjectDirs::from(
         "dev", 
@@ -83,7 +84,7 @@ pub fn app(
     });
 
     // (source name, message), cant be bothered to impl a better way rn :sob:
-    let mut messages: Vec<(String, String)> = vec![];
+    let mut messages: Vec<(String, String, String)> = vec![];
 
     let mut scroll_offset: usize = 0;
 
@@ -255,26 +256,28 @@ pub fn app(
                 if selected_type == 0 {
                     let group_id = index_group_map.get(&selected_index).unwrap().id.clone();
 
-                    let mut query = db.prepare("SELECT sourceName, message FROM messages WHERE groupId = ? and pending = 0").unwrap();
-                    let mut rows = query.query(&[&group_id]).unwrap();
+                    let mut query = db.prepare("SELECT sourceName, sourceNumber, message FROM messages WHERE groupId = ? and pending = 0 and accountNumber = ?").unwrap();
+                    let mut rows = query.query(&[&group_id, &account_number]).unwrap();
 
                     while let Some(row) = rows.next().unwrap() {
                         let source_name: String = row.get(0).unwrap();
-                        let message: String = row.get(1).unwrap();
+                        let source_number: String = row.get(1).unwrap_or_default();
+                        let message: String = row.get(2).unwrap();
 
-                        messages.push((source_name, message));
+                        messages.push((source_name, source_number, message));
                     }
                 } else {
                     let contact_uuid = index_contact_map.get(&selected_index).unwrap().uuid.clone();
 
-                    let mut query = db.prepare("SELECT sourceName, message FROM messages WHERE (destinationUuid = ? OR (sourceUuid = ? AND destinationUuid = 'self')) and pending = 0").unwrap();
-                    let mut rows = query.query(&[&contact_uuid, &contact_uuid]).unwrap();
+                    let mut query = db.prepare("SELECT sourceName, sourceNumber, message FROM messages WHERE (destinationUuid = ? OR (sourceUuid = ? AND destinationUuid = 'self')) and pending = 0 and accountNumber = ?").unwrap();
+                    let mut rows = query.query(&[&contact_uuid, &contact_uuid, &account_number]).unwrap();
 
                     while let Some(row) = rows.next().unwrap() {
                         let source_name: String = row.get(0).unwrap();
-                        let message: String = row.get(1).unwrap();
+                        let source_number: String = row.get(1).unwrap_or_default();
+                        let message: String = row.get(2).unwrap();
 
-                        messages.push((source_name, message));
+                        messages.push((source_name, source_number, message));
                     }
                 }
                                 
@@ -316,8 +319,19 @@ pub fn app(
                         Style::default()
                     };
 
+
+                    let author = if message.1.is_empty() {
+                        message.0.clone()
+                    } else {
+                        if message.1 == account_number {
+                            format!("(you)")
+                        } else {
+                            format!("{}", message.0)
+                        }
+                    };
+
                     let p = Paragraph::new(
-                        format!("{}: {}", message.0, message.1)
+                        format!("{}: {}", author, message.2)
                     ).style(style);
 
                     f.render_widget(p, layout);
@@ -422,6 +436,7 @@ pub fn app(
                                 },
                                 selected_type,
                                 &db,
+                                account_number.clone(),
                             );
 
                             input_text = String::new();

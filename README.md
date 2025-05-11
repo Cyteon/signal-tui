@@ -5,11 +5,12 @@ An signal terminal ui, using signal-cli to communicate with signal, and sqlite t
 - [x] Linking with phone
 - [x] Reading messages
 - [x] Sending messages
+- [ ] Expiring messages
+- [ ] Deleting messages/getting message delete events
+- [ ] View info abt message
 - [ ] Starting new DMs
+- [ ] Accepting message requests
 - [ ] Joining groups
 - [ ] Making groups
 - [ ] Changing chat settings
 - [ ] Changing user info
-
-### Known issues:
-- When sending messages using the TUI, they will appear as `(you)` instead of your username, this issue will only affect you. Currently working to fix this.

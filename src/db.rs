@@ -3,6 +3,7 @@ pub fn init(db: &rusqlite::Connection) -> rusqlite::Result<()> {
         "CREATE TABLE IF NOT EXISTS messages (
             id TEXT PRIMARY KEY,
             sourceUuid TEXT NOT NULL,
+            sourceNumber TEXT,
             sourceName TEXT NOT NULL,
             destinationUuid TEXT,
             groupId TEXT,

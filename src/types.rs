@@ -89,6 +89,7 @@ pub struct SignalMessageEventResult {
 #[serde(rename_all = "camelCase")]
 pub struct SignalMessageEventEnvelope {
     pub source_uuid: String,
+    pub source_number: Option<String>,
     pub source_name: String,
     pub timestamp: u64,
     pub data_message: Option<SignalMessageEventDataMessage>,

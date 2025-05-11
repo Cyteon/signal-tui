@@ -103,6 +103,7 @@ pub fn send_msg(
     dest_id: String,
     dest_type: usize, // 0 = group, 1 = contact
     db: &rusqlite::Connection,
+    account_number: String
 ) {
     let id = generate_id();
 
@@ -139,30 +140,34 @@ pub fn send_msg(
 
     if dest_type == 0 {
         db.execute(
-            "INSERT INTO messages (id, sourceUuid, sourceName, destinationUuid, groupId, message, timestamp, pending) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO messages (id, sourceUuid, sourceNumber, sourceName, destinationUuid, groupId, message, timestamp, pending, accountNumber) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 id,
                 "self",
+                account_number,
                 "(you)",
                 None::<String>,
                 dest_id,
                 msg,
                 0,
-                1
+                1,
+                account_number
             ],
         ).unwrap();
     } else {
         db.execute(
-            "INSERT INTO messages (id, sourceUuid, sourceName, destinationUuid, groupId, message, timestamp, pending) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO messages (id, sourceUuid, sourceNumber, sourceName, destinationUuid, groupId, message, timestamp, pending, accountNumber) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 id,
                 "self",
+                account_number,
                 "(you)",
                 dest_id,
                 None::<String>,
                 msg,
                 0,
-                1
+                1,
+                account_number
             ],
         ).unwrap();
     }
@@ -170,7 +175,6 @@ pub fn send_msg(
 
 pub fn read_events_countinously(
     stdout: &mut std::process::ChildStdout,
-// just going to return name and msg, cant be bothered to do more rn :sob:
 ) {
     let path = ProjectDirs::from(
         "dev", 
@@ -245,11 +249,18 @@ pub fn read_events_countinously(
                     }
                 };
 
+                let source_number = if let Some(source_number) = envelope.source_number {
+                    Some(source_number)
+                } else {
+                    None
+                };
+
                 db.execute(
-                    "INSERT INTO messages (id, sourceUuid, sourceName, destinationUuid, groupId, message, timestamp, pending, accountNumber) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    "INSERT INTO messages (id, sourceUuid, sourceNumber, sourceName, destinationUuid, groupId, message, timestamp, pending, accountNumber) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     rusqlite::params![
                         generate_id(), // ill use this for msg ids too
                         source_uuid,
+                        source_number,
                         source_name,
                         destionation_uuid,
                         group_id,

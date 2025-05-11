@@ -289,7 +289,8 @@ fn run(mut terminal: DefaultTerminal) -> Result<()> {
                             app::app(
                                 &mut terminal, 
                                 &mut *stdin.lock().unwrap(), 
-                                stdout
+                                stdout,
+                                accounts[index].number.clone(),
                             ).unwrap();
 
                             break;
