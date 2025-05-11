@@ -8,7 +8,9 @@ pub fn init(db: &rusqlite::Connection) -> rusqlite::Result<()> {
             groupId TEXT,
             message TEXT NOT NULL,
             timestamp INTEGER NOT NULL,
-            accountNumber TEXT NOT NULL
+            expiresInSeconds INTEGER,
+            pending INTEGER NOT NULL,
+            accountNumber TEXT
         )",
         [],
     )?;

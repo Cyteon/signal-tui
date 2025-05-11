@@ -3,6 +3,13 @@ use serde::{Deserialize, Serialize};
 
 // -- rpc --
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SignalGenericResponse {
+    pub jsonrpc: String,
+    pub result: HashMap<String, serde_json::Value>,
+    pub id: Option<String>,
+}
+
 // {"jsonrpc":"2.0","result":{"deviceLinkUri":"sgnl://linkdevice?uuid=X&pub_key=X"},"id":"5"}
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SignalLinkingResponse {

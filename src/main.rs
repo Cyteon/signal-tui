@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use color_eyre::Result;
 use crossterm::event::{self, Event};
 use qrcode::QrCode;
@@ -17,6 +19,7 @@ mod types;
 mod app;
 
 fn main() -> Result<()> {
+
     color_eyre::install()?;
     
     let terminal = ratatui::init();
@@ -36,6 +39,8 @@ fn run(mut terminal: DefaultTerminal) -> Result<()> {
         proj_dirs.data_local_dir().to_path_buf()
     }).unwrap();
     std::fs::create_dir_all(&path)?;
+
+    let _ = std::fs::remove_file(path.join("debug.log"));
 
     let database = Connection::open(path.join("data.db"))?;
     db::init(&database)?;
@@ -298,4 +303,27 @@ fn run(mut terminal: DefaultTerminal) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn debug_to_file(
+    content: String,
+) {
+    use std::io::Write;
+
+    let path = ProjectDirs::from(
+        "dev", 
+        "cyteon", 
+        "signal-tui"
+    ).map(|proj_dirs| {
+        proj_dirs.data_local_dir().to_path_buf()
+    }).unwrap();
+
+    std::fs::create_dir_all(&path).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path.join("debug.log"))
+        .unwrap();
+
+    file.write_all((content + "\n").as_bytes()).unwrap();
 }

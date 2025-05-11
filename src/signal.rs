@@ -1,14 +1,16 @@
-use std::{io::{self, BufRead, BufReader, Read, Write}, path::PathBuf};
+use std::{io::{self, BufRead, BufReader, Read, Write}, path::PathBuf, sync::mpsc, time::Duration};
 use color_eyre::owo_colors::OwoColorize;
+use directories::ProjectDirs;
 use hostname::get;
 use random_string::generate;
 use ratatui::{layout::{Alignment, Constraint, Direction, Layout}, style::{Color, Style}, widgets::{Block, Borders, Gauge, Paragraph}, DefaultTerminal};
+use rusqlite::Connection;
 use std::process::{Command, Stdio};
 use reqwest::blocking::Client;
 use flate2::read::GzDecoder;
 use tar::Archive;
 
-use crate::types::{self, SignalAccount, SignalContact, SignalGroup};
+use crate::{db, types::{self, SignalAccount, SignalContact, SignalGroup}};
 
 pub fn create_cli(path: PathBuf, args: String) -> io::Result<std::process::Child> {
     let cli_path = match std::env::consts::OS {
@@ -95,100 +97,201 @@ pub fn subscribe_receive(
     writeln!(stdin, "{{\"jsonrpc\":\"2.0\",\"method\":\"subscribeReceive\",\"params\":{{}},\"id\":\"{}\"}}", id).unwrap();
 }
 
-pub fn read_msg_event(
-    stdout: &mut std::process::ChildStdout,
+pub fn send_msg(
+    stdin: &mut std::process::ChildStdin, 
+    msg: String,
+    dest_id: String,
+    dest_type: usize, // 0 = group, 1 = contact
     db: &rusqlite::Connection,
+) {
+    let id = generate_id();
+
+    let dest_payload = if dest_type == 0 {
+        format!(r#""groupId": "{}""#, dest_id)
+    } else if dest_type == 1 {
+        format!(r#""recipient": ["{}"]"#, dest_id)
+    } else {
+        panic!("Invalid destination type");
+    };
+
+    let payload = format!(
+        r#"
+            {{
+                "jsonrpc":"2.0",
+                "method":"send",
+                "id":"{}",
+                "params": {{
+                    "message": "{}",
+                    {}
+                }}
+            }}
+        "#,
+        id, msg, dest_payload
+    );
+
+    let payload = payload.replace("\n", "");
+    let payload = payload.replace("\t", "");
+    let payload = payload.trim().to_string();
+
+    writeln!(
+        stdin, "{}", payload
+    ).unwrap();
+
+    if dest_type == 0 {
+        db.execute(
+            "INSERT INTO messages (id, sourceUuid, sourceName, destinationUuid, groupId, message, timestamp, pending) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                id,
+                "self",
+                "(you)",
+                None::<String>,
+                dest_id,
+                msg,
+                0,
+                1
+            ],
+        ).unwrap();
+    } else {
+        db.execute(
+            "INSERT INTO messages (id, sourceUuid, sourceName, destinationUuid, groupId, message, timestamp, pending) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                id,
+                "self",
+                "(you)",
+                dest_id,
+                None::<String>,
+                msg,
+                0,
+                1
+            ],
+        ).unwrap();
+    }
+}
+
+pub fn read_events_countinously(
+    stdout: &mut std::process::ChildStdout,
 // just going to return name and msg, cant be bothered to do more rn :sob:
-) -> Option<(String, Option<String>, Option<String>, String, String)> {
+) {
+    let path = ProjectDirs::from(
+        "dev", 
+        "cyteon", 
+        "signal-tui"
+    ).map(|proj_dirs| {
+        proj_dirs.data_local_dir().to_path_buf()
+    }).unwrap();
+
+    let db: &rusqlite::Connection = &Connection::open(path.join("data.db")).unwrap();
+
     let reader = BufReader::new(stdout);
 
     for line in reader.lines() {
-        let line = line.unwrap();
+        let line = line.unwrap_or_default();
+        crate::debug_to_file(line.clone());
+
         if line.contains("\"method\":\"receive\"") {
-        let data: Result<types::SignalMessageEvent, serde_json::Error> = serde_json::from_str(&line);
+            let data: Result<types::SignalMessageEvent, serde_json::Error> = serde_json::from_str(&line);
 
-        if let Ok(data) = data {
-            let envelope = data.params.result.envelope;
+            if let Ok(data) = data {
+                let envelope = data.params.result.envelope;
 
-            let source_uuid = envelope.source_uuid;
-            let source_name = envelope.source_name;
-            let timestamp = envelope.timestamp;
-            let account_number = data.params.result.account;
+                let source_uuid = envelope.source_uuid;
+                let source_name = envelope.source_name;
+                let timestamp = envelope.timestamp;
+                let account_number = data.params.result.account;
 
-            let msg = if let Some(data_message) = envelope.data_message.clone() {
-                data_message.message.unwrap_or_default()
-            } else if let Some(sync_message) = envelope.sync_message.clone()  {
-                if let Some(sent_message) = sync_message.sent_message {
-                    if let Some(message) = sent_message.message {
-                        message
+                let msg = if let Some(data_message) = envelope.data_message.clone() {
+                    data_message.message.unwrap_or_default()
+                } else if let Some(sync_message) = envelope.sync_message.clone()  {
+                    if let Some(sent_message) = sync_message.sent_message {
+                        if let Some(message) = sent_message.message {
+                            message
+                        } else {
+                            return;
+                        }
                     } else {
-                        return None;
+                        return;
                     }
                 } else {
-                    return None;
-                }
-            } else {
-                return None;
-            };
+                    return;
+                };
 
-            let mut group_id = None;
+                let mut group_id = None;
 
-            let destionation_uuid = if let Some(sync_message) = envelope.sync_message {
-                if let Some(sent_message) = sync_message.sent_message {
-                    if let Some(destination_uuid) = sent_message.destination_uuid {
-                    Some(destination_uuid)
+                let destionation_uuid = if let Some(sync_message) = envelope.sync_message {
+                    if let Some(sent_message) = sync_message.sent_message {
+                        if let Some(destination_uuid) = sent_message.destination_uuid {
+                        Some(destination_uuid)
+                        } else {
+                            if let Some(group_info) = sent_message.group_info {
+                                group_id = Some(group_info.group_id);
+                                None
+                            } else {
+                                return;
+                            }
+                        }
                     } else {
-                        if let Some(group_info) = sent_message.group_info {
+                        return;
+                    }
+                } else {
+                    if envelope.data_message.is_some() {
+                        if let Some(group_info) = envelope.data_message.unwrap().group_info {
                             group_id = Some(group_info.group_id);
                             None
                         } else {
-                            return None;
+                            Some("self".to_string())
                         }
-                    }
-                } else {
-                    return None;
-                }
-            } else {
-                if envelope.data_message.is_some() {
-                    if let Some(group_info) = envelope.data_message.unwrap().group_info {
-                        group_id = Some(group_info.group_id);
-                        None
                     } else {
-                        Some("self".to_string())
+                        return;
                     }
-                } else {
-                    return None;
+                };
+
+                db.execute(
+                    "INSERT INTO messages (id, sourceUuid, sourceName, destinationUuid, groupId, message, timestamp, pending, accountNumber) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    rusqlite::params![
+                        generate_id(), // ill use this for msg ids too
+                        source_uuid,
+                        source_name,
+                        destionation_uuid,
+                        group_id,
+                        msg,
+                        timestamp,
+                        0,
+                        account_number
+                    ],
+                ).unwrap();
+            } else {
+                return;
+            }
+        } else if line.contains("\"type\":\"SUCCESS\"") {
+            let data: Result<types::SignalGenericResponse, serde_json::Error> = serde_json::from_str(&line);
+
+            match data {
+                Ok(data) => {
+                    if data.id.is_some() {
+                        let id = data.id.unwrap();
+                        let timestamp = match data.result["timestamp"].clone() {
+                            serde_json::Value::Number(num) => num.as_u64().unwrap(),
+                            _ => return
+                        };
+                        
+                        db.execute(
+                            "UPDATE messages SET pending = 0, timestamp = ?1 WHERE id = ?2",
+                            rusqlite::params![timestamp, id]
+                        ).unwrap();
+                    } else {
+                        return;
+                    }
                 }
-            };
 
-            db.execute(
-                "INSERT INTO messages (id, sourceUuid, sourceName, destinationUuid, groupId, message, timestamp, accountNumber) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                rusqlite::params![
-                    generate_id(), // ill use this for msg ids too
-                    source_uuid,
-                    source_name,
-                    destionation_uuid,
-                    group_id,
-                    msg,
-                    timestamp,
-                    account_number
-                ],
-            ).unwrap();
-
-            return Some((
-                source_uuid,
-                destionation_uuid,
-                group_id,
-                source_name,
-                msg,
-            ));
-        } else {
-            return None;
-        }
+                Err(err) => {
+                    crate::debug_to_file(
+                        format!("Error parsing generic JSON for type success: {}", err)
+                    );
+                    return;
+                }
+            } 
         }
     }
-
-    None
 }
 
 

@@ -4,7 +4,7 @@ use crossterm::{event::{self, Event}};
 use color_eyre::Result;
 use directories::ProjectDirs;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect}, style::{Color, Style}, widgets::{Block, BorderType, Borders, Padding, Paragraph}, DefaultTerminal
+    layout::{Constraint, Direction, Layout, Position, Rect}, style::{Color, Style}, widgets::{Block, BorderType, Borders, Padding, Paragraph}, DefaultTerminal
 };
 use rusqlite::Connection;
 
@@ -15,8 +15,6 @@ pub fn app(
     stdin: &mut std::process::ChildStdin, 
     stdout: std::sync::Arc<std::sync::Mutex<ChildStdout>>
 ) -> Result<()> {
-    let mut stdout = stdout;
-
     let path = ProjectDirs::from(
         "dev", 
         "cyteon", 
@@ -25,6 +23,8 @@ pub fn app(
         proj_dirs.data_local_dir().to_path_buf()
     }).unwrap();
     std::fs::create_dir_all(&path)?;
+
+    let db = Connection::open(path.join("data.db")).unwrap();
 
     terminal.draw(|f| {
         let centered = {
@@ -61,6 +61,8 @@ pub fn app(
     let mut location_selected: bool = false;
     let mut chatting = false;
 
+    let mut input_text = String::new();
+
     // 0 = group, 1 = contact
     let mut selected_type: usize = 0;
 
@@ -68,13 +70,14 @@ pub fn app(
 
     signal::subscribe_receive(stdin);
 
-    let path_clone = path.clone();
+    let stoud_clone = stdout.clone();
     thread::spawn({
         move || {
-            let database: &rusqlite::Connection = &Connection::open(path_clone.join("data.db")).unwrap();
-
             loop {
-                signal::read_msg_event(&mut *stdout.lock().unwrap(), database);
+                {
+                    let mut stdout: std::sync::MutexGuard<'_, ChildStdout> = stoud_clone.lock().unwrap();
+                    signal::read_events_countinously(&mut *stdout);
+                }
             }
         }
     });
@@ -98,16 +101,26 @@ pub fn app(
                 .borders(Borders::ALL).border_type(BorderType::Rounded);
 
             let esc_action = if chatting {
-                "stop typing"
+                "unfocus input"
             } else if location_selected {
                 "back"
             } else {
                 "exit"
             };
             
+            let last_action = if chatting {
+                " | 'enter' - send message"
+            } else if location_selected {
+                " | 'e' - focus input"
+            } else if !location_selected {
+                " | 'enter' - select"
+            } else {
+                ""
+            };
+            
             let chat_block = Block::default()
                 .borders(Borders::ALL).border_type(BorderType::Rounded)
-                .title(format!(" 'esc' - {} | up/down - navigate | 'enter' - reply | 'e' - chat ", esc_action))
+                .title(format!(" 'esc' - {} | up/down - navigate{} ", esc_action, last_action))
                 .title_alignment(ratatui::layout::Alignment::Center)
                 .padding(Padding::horizontal(1));
 
@@ -235,15 +248,14 @@ pub fn app(
             }
 
             if location_selected {
-                let db = Connection::open(path.join("data.db")).unwrap();
-
                 let messages_last_time = messages.len();
+                let was_at_bottom = message_index >= messages.len().saturating_sub(1);
                 messages = vec![];
 
                 if selected_type == 0 {
                     let group_id = index_group_map.get(&selected_index).unwrap().id.clone();
 
-                    let mut query = db.prepare("SELECT sourceName, message FROM messages WHERE groupId = ?").unwrap();
+                    let mut query = db.prepare("SELECT sourceName, message FROM messages WHERE groupId = ? and pending = 0").unwrap();
                     let mut rows = query.query(&[&group_id]).unwrap();
 
                     while let Some(row) = rows.next().unwrap() {
@@ -255,7 +267,7 @@ pub fn app(
                 } else {
                     let contact_uuid = index_contact_map.get(&selected_index).unwrap().uuid.clone();
 
-                    let mut query = db.prepare("SELECT sourceName, message FROM messages WHERE destinationUuid = ? OR (sourceUuid = ? AND destinationUuid = 'self')").unwrap();
+                    let mut query = db.prepare("SELECT sourceName, message FROM messages WHERE (destinationUuid = ? OR (sourceUuid = ? AND destinationUuid = 'self')) and pending = 0").unwrap();
                     let mut rows = query.query(&[&contact_uuid, &contact_uuid]).unwrap();
 
                     while let Some(row) = rows.next().unwrap() {
@@ -267,7 +279,11 @@ pub fn app(
                 }
                                 
                 let chat_height = chat_block.inner(h_chunks[1]).height as usize;                
-                let visible_count = chat_height.min(messages.len());
+                let mut visible_count = chat_height.min(messages.len());
+
+                if chat_height < messages.len() {
+                    visible_count = visible_count.saturating_sub(3);
+                }
 
                 if message_index < scroll_offset {
                     scroll_offset = message_index;
@@ -280,13 +296,16 @@ pub fn app(
                     scroll_offset = messages.len().saturating_sub(visible_count);
                 }
 
+                let mut c = vec![
+                    Constraint::Length(1); visible_count
+                ];
+
+                c.push(Constraint::Length(3));
+
                 let chat_layout = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints(vec![
-                        Constraint::Length(1); visible_count + 1
-                    ])
+                    .constraints(c)
                     .split(chat_block.inner(h_chunks[1]));
-
 
                 for (i, message) in messages.iter().enumerate().skip(scroll_offset).take(visible_count) {
                     let layout = chat_layout[i - scroll_offset];
@@ -313,12 +332,41 @@ pub fn app(
 
                     f.render_widget(p, layout);
                 }
+
+                if was_at_bottom {
+                    message_index = messages.len().saturating_sub(1);
+                    scroll_offset = messages.len().saturating_sub(visible_count);
+                }
+
+                let input = Paragraph::new(input_text.clone())
+                    .block(Block::bordered().title("Input"))
+                    .style(match chatting {
+                        true => Style::default().fg(Color::Blue),
+                        false => Style::default()
+                    });
+
+                f.render_widget(input, chat_layout[visible_count]);
+
+                if chatting {
+                    f.set_cursor_position(Position::new(
+                        chat_layout[visible_count].x + 1 + input_text.len() as u16,
+                        chat_layout[visible_count].y + 1
+                    ));
+                }
             }
         })?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
+                    crossterm::event::KeyCode::Char('e') => {
+                        if location_selected && !chatting {
+                            chatting = true;
+                        } else if chatting {
+                            input_text.push('e');
+                        }
+                    },
+
                     crossterm::event::KeyCode::Esc => {
                         if chatting {
                             chatting = false;
@@ -326,28 +374,33 @@ pub fn app(
                             location_selected = false;
                             chatting = false;
                             message_index = 0;  
+                            input_text = String::new();
                         } else {
                             break;
                         }
                     },
 
                     crossterm::event::KeyCode::Up => {
-                        if location_selected {
-                            if message_index > 0 {
-                                message_index -= 1;
+                        if !chatting {
+                            if location_selected {
+                                if message_index > 0 {
+                                    message_index -= 1;
+                                }
+                            } else if selected_index > 0 {
+                                selected_index -= 1;
                             }
-                        } else if selected_index > 0 {
-                            selected_index -= 1;
                         }
                     }
 
                     crossterm::event::KeyCode::Down => {
-                        if location_selected {
-                            if message_index < messages.len().saturating_sub(1) {
-                                message_index += 1;
+                        if !chatting {
+                            if location_selected {
+                                if message_index < messages.len().saturating_sub(1) {
+                                    message_index += 1;
+                                }
+                            } else if selected_index < groups.len() + contacts.len() + 1 {
+                                selected_index += 1;
                             }
-                        } else if selected_index < groups.len() + contacts.len() + 1 {
-                            selected_index += 1;
                         }
                     }
 
@@ -358,7 +411,21 @@ pub fn app(
                             show_groups = !show_groups;
                         } else if selected_index == contact_index {
                             show_contacts = !show_contacts;
-                            
+                        } else if chatting {
+                            signal::send_msg(
+                                stdin,
+                                input_text.clone(),
+                                if selected_type == 0 {
+                                    index_group_map.get(&selected_index).unwrap().id.clone()
+                                } else {
+                                    index_contact_map.get(&selected_index).unwrap().uuid.clone()
+                                },
+                                selected_type,
+                                &db,
+                            );
+
+                            input_text = String::new();
+                            chatting = false;
                         } else {
                             location_selected = true;
                             chatting = false;
@@ -370,7 +437,20 @@ pub fn app(
                             };
                         }
                     }
-                    _ => {}
+
+                    char => {
+                        if chatting {
+                            if char == crossterm::event::KeyCode::Backspace {
+                                if !input_text.is_empty() {
+                                    input_text.pop();
+                                }
+                            } else {
+                                if let crossterm::event::KeyCode::Char(c) = char {
+                                    input_text.push(c);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
