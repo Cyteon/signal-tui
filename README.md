@@ -15,3 +15,6 @@ An signal terminal ui, using signal-cli to communicate with signal, and sqlite t
 - [ ] Making groups
 - [ ] Changing chat settings
 - [ ] Changing user info
+
+### Known issues
+- Long messages will clip out of screen
