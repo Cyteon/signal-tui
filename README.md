@@ -6,6 +6,7 @@ An signal terminal ui, using signal-cli to communicate with signal, and sqlite t
 - [x] Reading messages
 - [x] Sending messages
 - [ ] Replying to messages
+- [ ] Typing indicators
 - [ ] Expiring messages
 - [ ] Deleting messages/getting message delete events
 - [ ] View info abt message
