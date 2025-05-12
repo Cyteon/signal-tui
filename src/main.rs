@@ -54,7 +54,7 @@ fn run(mut terminal: DefaultTerminal) -> Result<()> {
     let stdout: std::sync::Arc<std::sync::Mutex<std::process::ChildStdout>> = std::sync::Arc::new(std::sync::Mutex::new(cli.stdout.take().unwrap()));
 
     let mut accounts = signal::list_accounts(&mut *stdin.lock().unwrap(), &mut *stdout.lock().unwrap());
-    let mut selected_number: String = "".to_string();
+    let mut selected_number = String::new();
     let mut index = 0;
 
     loop {
@@ -290,7 +290,7 @@ fn run(mut terminal: DefaultTerminal) -> Result<()> {
                                 &mut terminal, 
                                 &mut *stdin.lock().unwrap(), 
                                 stdout,
-                                accounts[index].number.clone(),
+                                selected_number
                             ).unwrap();
 
                             break;

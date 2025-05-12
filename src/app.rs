@@ -109,19 +109,19 @@ pub fn app(
                 "exit"
             };
             
-            let last_action = if chatting {
-                " | 'enter' - send message"
+            let last_actions = if chatting {
+                "'enter' - send message"
             } else if location_selected {
-                " | 'e' - focus input"
+                "up/down - navigate | 'e' - focus input"
             } else if !location_selected {
-                " | 'enter' - select"
+                "'enter' - select"
             } else {
                 ""
             };
             
             let chat_block = Block::default()
                 .borders(Borders::ALL).border_type(BorderType::Rounded)
-                .title(format!(" 'esc' - {} | up/down - navigate{} ", esc_action, last_action))
+                .title(format!(" 'esc' - {} | {} ", esc_action, last_actions))
                 .title_alignment(ratatui::layout::Alignment::Center)
                 .padding(Padding::horizontal(1));
 
@@ -307,9 +307,10 @@ pub fn app(
                     let line_count = text
                         .chars()
                         .collect::<Vec<_>>()
-                        .chunks(chat_width.saturating_sub(2).max(1))
+                        .chunks(chat_width.max(1))
                         .count()
                         .max(1);
+                    
                     message_line_counts.push(line_count);
                 }
 
@@ -317,16 +318,20 @@ pub fn app(
                 let mut total_lines = 0;
                 let start = scroll_offset;
                 let mut end = scroll_offset;
+
                 while end < messages.len() && total_lines + message_line_counts[end] <= available_lines {
                     total_lines += message_line_counts[end];
                     end += 1;
                 }
+
                 let visible_count = end - start;
 
                 let mut msg_line_sum = 0;
+
                 for i in 0..message_index {
                     msg_line_sum += message_line_counts.get(i).copied().unwrap_or(1);
                 }
+
                 if msg_line_sum < scroll_offset {
                     scroll_offset = msg_line_sum;
                 } else if msg_line_sum >= scroll_offset + available_lines {
@@ -337,6 +342,7 @@ pub fn app(
                 for i in start..end {
                     c.push(Constraint::Length(message_line_counts[i] as u16));
                 }
+
                 // have 1 extra for "no messages" label
                 if messages.len() == 0 {
                     c.push(Constraint::Length(1));
@@ -436,22 +442,26 @@ pub fn app(
                     },
 
                     crossterm::event::KeyCode::Up => {
-                        if location_selected {
-                            if message_index > 0 {
-                                message_index -= 1;
+                        if !chatting {
+                            if location_selected {
+                                if message_index > 0 {
+                                    message_index -= 1;
+                                }
+                            } else if selected_index > 0 {
+                                selected_index -= 1;
                             }
-                        } else if selected_index > 0 {
-                            selected_index -= 1;
                         }
                     }
 
                     crossterm::event::KeyCode::Down => {
-                        if location_selected {
-                            if message_index < messages.len().saturating_sub(1) {
-                                message_index += 1;
+                        if !chatting {
+                            if location_selected {
+                                if message_index < messages.len().saturating_sub(1) {
+                                    message_index += 1;
+                                }
+                            } else if selected_index < groups.len() + contacts.len() + 1 {
+                                selected_index += 1;
                             }
-                        } else if selected_index < groups.len() + contacts.len() + 1 {
-                            selected_index += 1;
                         }
                     }
 

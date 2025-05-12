@@ -221,11 +221,9 @@ pub fn read_events_countinously(
 
                 let mut group_id = None;
 
-                let destionation_uuid = if let Some(sync_message) = envelope.sync_message {
+                let destionation_uuid = if let Some(sync_message) = envelope.sync_message.clone() {
                     if let Some(sent_message) = sync_message.sent_message {
-                        if let Some(destination_uuid) = sent_message.destination_uuid {
-                        Some(destination_uuid)
-                        } else {
+                        if let Some(destination_uuid) = sent_message.destination_uuid { Some(destination_uuid) } else {
                             if let Some(group_info) = sent_message.group_info {
                                 group_id = Some(group_info.group_id);
                                 None
@@ -238,7 +236,7 @@ pub fn read_events_countinously(
                     }
                 } else {
                     if envelope.data_message.is_some() {
-                        if let Some(group_info) = envelope.data_message.unwrap().group_info {
+                        if let Some(group_info) = envelope.data_message.clone().unwrap().group_info {
                             group_id = Some(group_info.group_id);
                             None
                         } else {
@@ -255,8 +253,20 @@ pub fn read_events_countinously(
                     None
                 };
 
+                let expires_in_seconds = if let Some(data_message) = envelope.data_message {
+                    data_message.expires_in_seconds
+                } else if let Some(sync_message) = envelope.sync_message {
+                    if let Some(sent_message) = sync_message.sent_message {
+                        sent_message.expires_in_seconds
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+
                 db.execute(
-                    "INSERT INTO messages (id, sourceUuid, sourceNumber, sourceName, destinationUuid, groupId, message, timestamp, pending, accountNumber) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    "INSERT INTO messages (id, sourceUuid, sourceNumber, sourceName, destinationUuid, groupId, message, timestamp, expiresInSeconds, pending, accountNumber) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                     rusqlite::params![
                         generate_id(), // ill use this for msg ids too
                         source_uuid,
@@ -266,6 +276,7 @@ pub fn read_events_countinously(
                         group_id,
                         msg,
                         timestamp,
+                        expires_in_seconds,
                         0,
                         account_number
                     ],
