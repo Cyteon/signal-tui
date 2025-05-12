@@ -4,7 +4,7 @@ use crossterm::{event::{self, Event}};
 use color_eyre::Result;
 use directories::ProjectDirs;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Position, Rect}, style::{Color, Style}, widgets::{Block, BorderType, Borders, Padding, Paragraph}, DefaultTerminal
+    layout::{Constraint, Direction, Layout, Position, Rect}, style::{Color, Style}, widgets::{Block, BorderType, Borders, Padding, Paragraph, Wrap}, DefaultTerminal
 };
 use rusqlite::Connection;
 
@@ -288,72 +288,97 @@ pub fn app(
                         messages.push((source_name, source_number, message));
                     }
                 }
-                                
-                let chat_height = chat_block.inner(h_chunks[1]).height as usize;                
-                let mut visible_count = chat_height.saturating_sub(3).min(messages.len());
 
-                if message_index < scroll_offset {
-                    scroll_offset = message_index;
-                } else if message_index >= scroll_offset + visible_count {
-                    scroll_offset = message_index + 1 - visible_count;
+                let chat_area = chat_block.inner(h_chunks[1]);
+                let chat_height = chat_area.height as usize;
+                let chat_width = chat_area.width as usize;
+
+                let mut message_line_counts = Vec::with_capacity(messages.len());
+                for (source_name, source_number, message) in &messages {
+                    let author = if source_number.is_empty() {
+                        source_name.clone()
+                    } else if source_number == &account_number {
+                        "(you)".to_string()
+                    } else {
+                        source_name.clone()
+                    };
+                    let text = format!("{}: {}", author, message);
+
+                    let line_count = text
+                        .chars()
+                        .collect::<Vec<_>>()
+                        .chunks(chat_width.saturating_sub(2).max(1))
+                        .count()
+                        .max(1);
+                    message_line_counts.push(line_count);
                 }
 
-                if messages_last_time == 0 {
-                    message_index = messages.len().saturating_sub(1);
-                    scroll_offset = messages.len().saturating_sub(visible_count);
+                let available_lines = chat_height.saturating_sub(3);
+                let mut total_lines = 0;
+                let start = scroll_offset;
+                let mut end = scroll_offset;
+                while end < messages.len() && total_lines + message_line_counts[end] <= available_lines {
+                    total_lines += message_line_counts[end];
+                    end += 1;
+                }
+                let visible_count = end - start;
+
+                let mut msg_line_sum = 0;
+                for i in 0..message_index {
+                    msg_line_sum += message_line_counts.get(i).copied().unwrap_or(1);
+                }
+                if msg_line_sum < scroll_offset {
+                    scroll_offset = msg_line_sum;
+                } else if msg_line_sum >= scroll_offset + available_lines {
+                    scroll_offset = msg_line_sum + 1 - available_lines;
                 }
 
-                let mut c = vec![
-                    Constraint::Length(1); visible_count
-                ];
-
+                let mut c: Vec<Constraint> = Vec::new();
+                for i in start..end {
+                    c.push(Constraint::Length(message_line_counts[i] as u16));
+                }
                 // have 1 extra for "no messages" label
                 if messages.len() == 0 {
                     c.push(Constraint::Length(1));
                 }
-
                 c.push(Constraint::Length(3));
 
                 let chat_layout = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints(c)
-                    .split(chat_block.inner(h_chunks[1]));
+                    .split(chat_area);
 
-                for (i, message) in messages.iter().enumerate().skip(scroll_offset).take(visible_count) {
-                    let layout = chat_layout[i - scroll_offset];
-
+                let mut layout_idx = 0;
+                for (i, (source_name, source_number, message)) in messages.iter().enumerate().skip(start).take(visible_count) {
                     let style = if i == message_index {
                         Style::default().bg(Color::Blue)
                     } else {
                         Style::default()
                     };
 
-
-                    let author = if message.1.is_empty() {
-                        message.0.clone()
+                    let author = if source_number.is_empty() {
+                        source_name.clone()
+                    } else if source_number == &account_number {
+                        "(you)".to_string()
                     } else {
-                        if message.1 == account_number {
-                            format!("(you)")
-                        } else {
-                            format!("{}", message.0)
-                        }
+                        source_name.clone()
                     };
 
-                    let p = Paragraph::new(
-                        format!("{}: {}", author, message.2)
-                    ).style(style);
+                    let p = Paragraph::new(format!("{}: {}", author, message))
+                        .style(style)
+                        .wrap(Wrap { trim: false });
 
-                    f.render_widget(p, layout);
+                    f.render_widget(p, chat_layout[layout_idx]);
+                    layout_idx += 1;
                 }
 
                 if messages.len() == 0 {
                     let layout = chat_layout[0];
-
                     let p = Paragraph::new(
                         "No messages :("
                     ).style(Style::default());
-
                     f.render_widget(p, layout);
+                    layout_idx += 1;
                 }
 
                 if was_at_bottom {
@@ -373,14 +398,14 @@ pub fn app(
                     if messages.len() == 0 {
                         chat_layout[1] // 1 cause the no messages label
                     } else {
-                        chat_layout[visible_count]
+                        chat_layout[layout_idx]
                     }
                 );
 
                 if chatting {
                     f.set_cursor_position(Position::new(
-                        chat_layout[visible_count].x + 1 + input_text.len() as u16,
-                        chat_layout[visible_count].y + 1 + if messages.len() == 0 { 1 } else { 0 }
+                        chat_layout[layout_idx].x + 1 + input_text.len() as u16,
+                        chat_layout[layout_idx].y + 1 + if messages.len() == 0 { 1 } else { 0 }
                     ));
                 }
             }
@@ -456,6 +481,8 @@ pub fn app(
                         } else {
                             location_selected = true;
                             chatting = false;
+                            message_index = 0;
+                            scroll_offset = 0;
 
                             selected_type = if selected_index < contact_index {
                                 0

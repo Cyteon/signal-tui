@@ -17,5 +17,5 @@ An signal terminal ui, using signal-cli to communicate with signal, and sqlite t
 - [ ] Changing chat settings
 - [ ] Changing user info
 
-### Known issues
-- Long messages will clip out of screen
+### Limitations
+- Can not show attachments, working on finding a good replacement
