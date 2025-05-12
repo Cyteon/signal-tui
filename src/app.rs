@@ -144,7 +144,9 @@ pub fn app(
             };
 
             if show_groups {
-                let title = Paragraph::new(" ▼ Groups")
+                let title = Paragraph::new(
+                    format!(" ▼ Groups ({})", groups.len())
+                )
                     .style(group_title_style);
 
                 f.render_widget(
@@ -175,7 +177,9 @@ pub fn app(
                     index += 1;
                 }
             } else {
-                let title = Paragraph::new(" ► Groups")
+                let title = Paragraph::new(
+                    format!(" ► Groups ({})", groups.len())
+                )
                     .style(group_title_style);
 
                 f.render_widget(
@@ -192,7 +196,9 @@ pub fn app(
             };
 
             if show_contacts {
-                let title = Paragraph::new(" ▼ People")
+                let title = Paragraph::new(
+                    format!(" ▼ People ({})", contacts.len())
+                )
                     .style(contact_title_style);
 
                 f.render_widget(
@@ -240,7 +246,9 @@ pub fn app(
                     index += 1;
                 }
             } else {
-                let title = Paragraph::new(" ► People")
+                let title = Paragraph::new(
+                    format!(" ► People ({})", contacts.len())
+                )
                     .style(contact_title_style);
 
                 f.render_widget(
@@ -282,11 +290,7 @@ pub fn app(
                 }
                                 
                 let chat_height = chat_block.inner(h_chunks[1]).height as usize;                
-                let mut visible_count = chat_height.min(messages.len());
-
-                if chat_height < messages.len() {
-                    visible_count = visible_count.saturating_sub(3);
-                }
+                let mut visible_count = chat_height.saturating_sub(3).min(messages.len());
 
                 if message_index < scroll_offset {
                     scroll_offset = message_index;
@@ -302,6 +306,11 @@ pub fn app(
                 let mut c = vec![
                     Constraint::Length(1); visible_count
                 ];
+
+                // have 1 extra for "no messages" label
+                if messages.len() == 0 {
+                    c.push(Constraint::Length(1));
+                }
 
                 c.push(Constraint::Length(3));
 
@@ -359,12 +368,19 @@ pub fn app(
                         false => Style::default()
                     });
 
-                f.render_widget(input, chat_layout[visible_count]);
+                f.render_widget(
+                    input,
+                    if messages.len() == 0 {
+                        chat_layout[1] // 1 cause the no messages label
+                    } else {
+                        chat_layout[visible_count]
+                    }
+                );
 
                 if chatting {
                     f.set_cursor_position(Position::new(
                         chat_layout[visible_count].x + 1 + input_text.len() as u16,
-                        chat_layout[visible_count].y + 1
+                        chat_layout[visible_count].y + 1 + if messages.len() == 0 { 1 } else { 0 }
                     ));
                 }
             }
